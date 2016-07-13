@@ -1,12 +1,17 @@
 package com.cybozu.labs.langdetect;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.*;
 
 import net.arnx.jsonic.JSON;
 import net.arnx.jsonic.JSONException;
@@ -50,9 +55,10 @@ public class DetectorFactory {
      * @param profileDirectory profile directory path
      * @throws LangDetectException  Can't open profiles(error code = {@link ErrorCode#FileLoadError})
      *                              or profile's format is wrong (error code = {@link ErrorCode#FormatError})
+     * @throws IOException 
      */
     public static void loadProfile(String profileDirectory) throws LangDetectException {
-        loadProfile(new File(profileDirectory));
+        loadProfile(new Path(profileDirectory));
     }
 
     /**
@@ -62,30 +68,36 @@ public class DetectorFactory {
      * @param profileDirectory profile directory path
      * @throws LangDetectException  Can't open profiles(error code = {@link ErrorCode#FileLoadError})
      *                              or profile's format is wrong (error code = {@link ErrorCode#FormatError})
+     * @throws IOException 
      */
-    public static void loadProfile(File profileDirectory) throws LangDetectException {
-        File[] listFiles = profileDirectory.listFiles();
-        if (listFiles == null)
-            throw new LangDetectException(ErrorCode.NeedLoadProfileError, "Not found profile: " + profileDirectory);
-            
-        int langsize = listFiles.length, index = 0;
-        for (File file: listFiles) {
-            if (file.getName().startsWith(".") || !file.isFile()) continue;
-            FileInputStream is = null;
-            try {
-                is = new FileInputStream(file);
-                LangProfile profile = JSON.decode(is, LangProfile.class);
-                addProfile(profile, index, langsize);
-                ++index;
-            } catch (JSONException e) {
-                throw new LangDetectException(ErrorCode.FormatError, "profile format error in '" + file.getName() + "'");
-            } catch (IOException e) {
-                throw new LangDetectException(ErrorCode.FileLoadError, "can't open '" + file.getName() + "'");
-            } finally {
+    public static void loadProfile(Path profileDirectory) throws LangDetectException {
+        try {
+            FileSystem fs = FileSystem.get(new Configuration());
+            FileStatus[] listFiles = fs.listStatus(profileDirectory);
+            if (listFiles == null)
+                throw new LangDetectException(ErrorCode.NeedLoadProfileError, "Not found profile: " + profileDirectory.toUri().toASCIIString());
+                
+            int langsize = listFiles.length, index = 0;
+            for (FileStatus file: listFiles) {
+                if (file.getPath().getName().startsWith(".") || file.isDir()) continue;
+                InputStreamReader is = null;
                 try {
-                    if (is!=null) is.close();
-                } catch (IOException e) {}
+                    is = new InputStreamReader(fs.open(file.getPath()));
+                    LangProfile profile = JSON.decode(is, LangProfile.class);
+                    addProfile(profile, index, langsize);
+                    ++index;
+                } catch (JSONException e) {
+                    throw new LangDetectException(ErrorCode.FormatError, "profile format error in '" + file.getPath().getName() + "'");
+                } catch (IOException e) {
+                    throw new LangDetectException(ErrorCode.FileLoadError, "can't open '" + file.getPath().getName() + "'");
+                } finally {
+                    try {
+                        if (is!=null) is.close();
+                    } catch (IOException e) {}
+                }
             }
+        } catch(IOException e) {
+            throw new LangDetectException(ErrorCode.FileLoadError, "io error");
         }
     }
 
